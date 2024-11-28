@@ -1,0 +1,743 @@
+---
+title: "Tarea_3"
+format: html
+editor: visual
+toc: true
+toc_float: true
+theme: morph
+lang: es
+---
+
+Universidad de Costa Rica\
+Maestría en Gestión Integrada del Recurso Hídrico\
+Programación R PF-0952\
+
+Susana Briceño Guevara\
+Melissa Rodríguez Campos\
+
+# Modelo de nichos ecológicos y distribución de la especie *Morpho peleides* {.center}
+
+En Costa Rica y otras regiones tropicales albergan a una gran cantidad de organismos de colores impactantes. Entre ellos se destacan las mariposas del genero morpho(Morpho), de un encendido color azul metálico que suelen llamar bastante la atención. Se trata de una de las más de 65 especies de mariposas que pertenecen al género Morpho. Se distribuye desde México hasta Colombia y Venezuela, según Jansen (1983)
+
+![](https://cdn0.ecologiaverde.com/es/posts/5/9/8/caracteristicas_de_la_mariposa_morpho_azul_3895_0_600.webp) **Figura 1**. Mariposa morpho (*Morpho peleides*)
+
+![](https://cdn0.ecologiaverde.com/es/posts/5/9/8/reproduccion_de_la_mariposa_morpho_azul_3895_3_600.webp)
+
+**Figura 2**. Imagen de una oruga de *Morpho Peleides*
+
+Estas mariposas son cazadas por su belleza, se utilizan comunmente en joyería y obras de arte. Tiene una gran importancia ecológica como parte de la cadena trófica y además de su función como descomonedore y formadores del suelo.\
+Sirven como especies bandera para la protección Son bioindicadores de condición del hábitat
+
+Según Rothschuh, U. (2022)
+
+**Figura 2**. Imagen de una oruga de *Morpho Peleides*
+
+## 1. Presencia de Mariposas Morpho en la Región de Centroamérica
+
+Para el análisis de la presencia de la mariposa *Morpho peleides* en la región de America Central se utilizan las bases de GBIF.
+
+```{r}
+#| label: instalacion_paq_lib
+#| message: false
+#| warning: false
+
+# Paquete para acceder datos en GBIF
+#install.packages("rgbif")
+
+# Paquete para acceder datos geoespaciales
+#install.packages("geodata")
+
+# Paquete para mapas interactivos
+#install.packages("leaflet")
+
+# Paquete para modelado de distribución de especies
+#install.packages("dismo")
+
+# Paquete de datos temperatura marina
+#install.packages("rerddap")
+
+# Colección de paquetes de Tidyverse
+library(tidyverse)
+
+# Estilos para ggplot2
+library(ggthemes)
+
+# Paletas de colores de RColorBrewer
+library(RColorBrewer)
+
+# Paletas de colores de viridis
+library(viridisLite)
+
+# Gráficos interactivos
+library(plotly)
+
+# Manejo de datos vectoriales
+library(sf)
+
+# Manejo de datos raster
+library(terra)
+
+# Manejo de datos raster
+library(raster)
+
+# Mapas interactivos
+library(leaflet)
+
+# Acceso a datos en GBIF
+library(rgbif)
+
+# Datos geoespaciales
+library(geodata)
+
+# Modelado de distribución de especies
+library(dismo)
+
+# Analisis de datos de fecha y hora
+library(lubridate)
+
+# Datos Copernicus NOAA
+library(rerddap)
+
+#Visualización de datos
+library(stars)
+
+# Manejo rJava
+library(rJava)
+
+options(repos = c(CRAN = "https://cran.rstudio.com/"))
+```
+
+```{r}
+#| label: definicion_especie
+#| message: false
+#| warning: false
+especie <- "Morpho peleides"
+
+# Consulta a GBIF
+respuesta <- occ_search(
+  scientificName = especie, 
+  hasCoordinate = TRUE,
+  hasGeospatialIssue = FALSE,
+  limit = 10000
+)
+
+# Extraer datos de presencia
+presencia <- respuesta$data
+
+# Guardar los datos de presencia en un archivo CSV
+write_csv(presencia, 'presencia.csv')
+
+# Leer los datos de presencia de un archivo CSV
+presencia <- read_csv('presencia.csv')
+
+presencia <- st_as_sf(
+  presencia,
+  coords = c("decimalLongitude", "decimalLatitude"),
+  remove = FALSE, # conservar las columnas de las coordenadas
+  crs = 4326
+)
+```
+
+Gráfico de registros de presencia de mariposas Morpho por país de la región de América Central
+
+```{r}
+#| label: presencia_pais
+#| message: false
+#| warning: false
+
+# Lista de códigos de países de América Central
+paises_america_central <- c("GT", "SV", "HN", "NI", "CR", "PA")
+
+# Filtrar los datos para incluir solo los países de América Central
+presencia_filtrada <- presencia %>%
+  filter(countryCode %in% paises_america_central) %>%
+  st_drop_geometry()
+
+# Gráfico ggplot2
+grafico_ggplot2 <-
+  presencia_filtrada |>
+  st_drop_geometry() |>
+  ggplot(aes(x = fct_infreq(countryCode))) +
+  geom_bar(
+    aes(
+      text = paste0(
+        "Cantidad de registros de presencia: ", after_stat(count)
+      )
+    )    
+  ) +
+  ggtitle("Cantidad de registros de presencia por país") +
+  xlab("País") +
+  ylab("Cantidad de registros de presencia") +
+  labs(caption = "Fuente: GBIF") +
+  theme_bw()
+
+# Gráfico plotly
+ggplotly(grafico_ggplot2, tooltip = "text") |> 
+  config(locale = 'es')
+```
+
+Costa Rica es el país de Centroamérica presenta la mayor cantidad de registros de la mariposa Morpho.
+
+## 2. Gráfico de distribución temporal
+
+A continuación se presentacón gráfico de distribución temporal de *Morpho peleides* por año.
+
+```{r}
+#| label: distribucion_temporal_interactiva
+#| message: false
+#| warning: false
+
+# Filtrar registros para Costa Rica y convertir las fechas a formato Date
+presencia_CR <- presencia %>%
+  filter(country == "Costa Rica") %>%
+  mutate(eventDate = ymd(eventDate))
+
+# Gráfico de la distribución de registros por fecha (histograma)
+grafico_temporal <- ggplot(presencia_CR, aes(x = eventDate)) +
+  geom_histogram(binwidth = 365, fill = "steelblue", color = "black") +
+  labs(
+    title = "Distribución Temporal de Registros de Morpho peleides en Costa Rica",
+    x = "Fecha",
+    y = "Número de Registros"
+  ) +
+  theme_minimal()
+
+# Convertir a interactivo con ggplotly
+ggplotly(grafico_temporal) %>%
+  layout(
+    hoverlabel = list(bgcolor = "white", font = list(size = 12))
+  )
+
+```
+
+A continuación se muestra el gráfico temporal de registros en Costa Rica el cuál se observa una disminución de los registros y es probable que por su belleza se utilizan en joyería y arte.
+
+#Obtención de datos climáticos
+
+```{r}
+#Obtención de datos climáticos
+
+#| label: consulta-climáticos
+#| warning: false
+#| message: false
+
+# Consulta a WorldClim
+clima <- worldclim_global(var = 'bio', res = 10, path = tempdir())
+
+# Nombres de las variables climáticas
+names(clima)
+
+```
+
+# Mapa de Dispersión de Morpho Peleides
+
+```{r}
+#| label: Mapa_Dispersión_CR
+
+# Paleta de colores de temperatura
+colores_temperatura <- colorNumeric(
+  palette = rev(brewer.pal(11, "RdYlBu")), 
+  values(clima$wc2.1_10m_bio_1),
+  na.color = "transparent"
+)
+
+# Paleta de colores de precipitación
+colores_precipitacion <- colorNumeric(
+  palette = "Blues",
+  values(clima$wc2.1_10m_bio_12),
+  na.color = "transparent"
+)
+
+# Mapa interactivo
+leaflet() |>
+  addTiles(group = "Mapa general") |>
+  addProviderTiles(
+    providers$Esri.WorldImagery, 
+    group = "Imágenes satelitales"
+  ) |>  
+  addProviderTiles(
+    providers$CartoDB.Positron, 
+    group = "Mapa blanco"
+  ) |>
+  addRasterImage( # capa raster de temperatura
+    clima$wc2.1_10m_bio_1,
+    colors = colores_temperatura, 
+    opacity = 0.6,
+    group = "Temperatura"
+  ) |>
+  addRasterImage( # capa raster de precipitación
+    clima$wc2.1_10m_bio_12,
+    colors = colores_precipitacion, 
+    opacity = 0.6,
+    group = "Precipitación"
+  ) |>
+  addCircleMarkers(
+    # capa de registros de presencia (puntos)
+    data = presencia_CR,
+    stroke = F,
+    radius = 3,
+    fillColor = '#3182bd',
+    fillOpacity = 1,
+    popup = paste(
+      paste0("<strong>País: </strong>", presencia_CR$country),
+      paste0("<strong>Localidad: </strong>", presencia_CR$locality),
+      paste0("<strong>Fecha: </strong>", presencia_CR$eventDate),
+      paste0("<strong>Fuente: </strong>", presencia_CR$institutionCode),
+      paste0("<a href='", presencia_CR$occurrenceID, "'>Más información</a>"),
+      sep = '<br/>'
+    ),
+    group = "Registros de Morpho Peleides"
+  ) |>
+  addLegend(
+    title = "Temperatura",
+    values = values(clima$wc2.1_10m_bio_1),
+    pal = colores_temperatura,
+    position = "bottomleft",
+    group = "Temperatura"
+  ) |>
+  addLegend(
+    title = "Precipitación",
+    values = values(clima$wc2.1_10m_bio_12),
+    pal = colores_precipitacion,
+    position = "bottomleft",
+    group = "Precipitación"
+  ) |>  
+  addLayersControl(
+    # control de capas
+    baseGroups = c("Mapa general", "Imágenes satelitales", "Mapa blanco"),
+    overlayGroups = c("Temperatura", "Precipitación", "Registros de Morpho peleides")
+  ) |>
+  hideGroup("Precipitación") |>
+  
+  
+  # Set the map center and zoom level for Costa Rica
+  setView(lng = -84.0, 
+          lat = 9.5, zoom = 7
+          ) 
+
+```
+
+## 3. Gráficos de curva de ROC y AUC
+
+### Modelizar
+
+```{r}
+#| label: coordenadas-unicas
+#| warning: false
+#| message: false
+# Crear dataframe con columnas de longitud y latitud
+coordenadas_presencia_CR <- data.frame(
+  decimalLongitude = presencia_CR$decimalLongitude,
+  decimalLatitude = presencia_CR$decimalLatitude
+)
+
+#print(coordenadas_presencia_CR)
+
+# Eliminar coordenadas duplicadas
+coordenadas_presencia_CR <- unique(coordenadas_presencia_CR)
+```
+
+### Divide los datos en entrenamiento y evaluación aleatoriamente
+
+```{r}
+
+#| label: datos-entrenamiento_evaluacion
+
+# Establecer una "semilla" para garantizar que la selección aleatoria sea reproducible
+set.seed(123)
+
+# Cantidad de registros de presencia
+n_presencia <- nrow(coordenadas_presencia_CR)
+
+# Con sample(), se selecciona aleatoriamente una proporción (ej. 0.7) 
+# de los índices de los datos de presencia para el conjunto de entrenamiento
+indices_entrenamiento <- sample(
+  1:n_presencia, 
+  size = round(0.7 * n_presencia)
+)
+
+# Crear el subconjunto de entrenamiento utilizando los índices seleccionados
+entrenamiento <- coordenadas_presencia_CR[indices_entrenamiento, ]
+
+# Crear el subconjunto de evaluación con los datos restantes
+evaluacion <- coordenadas_presencia_CR[-indices_entrenamiento, ]
+
+```
+
+### Ejecución de Modelo
+
+```{r}
+#| label: Maxent_ev
+
+# Los datos de clima deben convertirse al formato que usa el paquete raster
+# debido a es este el que acepta el paquete dismo
+clima <- raster::stack(clima)
+
+# Ejecutar el modelo
+modelo_maxent <- maxent(x = clima, p = entrenamiento)
+
+# Aplicar el modelo entrenado a las variables climáticas 
+# para generar un mapa de idoneidad del hábitat
+prediccion <- predict(modelo_maxent, clima)
+
+```
+
+### Evaluación de la predicción del modelo
+
+```{r}
+
+#| label: Evaluacion
+# terra::extract() extrae los valores del raster de predicción 
+# en las coordenadas de evaluación
+# eval_pres almacena los valores de idoneidad predichos 
+# en los puntos de evaluación de presencia
+eval_pres <- terra::extract(
+  prediccion, 
+  evaluacion[, c('decimalLongitude', 'decimalLatitude')]
+)
+
+# Generar puntos aleatorios dentro del área de estudio definida. 
+# Estos puntos se asumen como ausencias de la especie.
+ausencias <- randomPoints(mask = clima, n = 1000)
+
+# eval_aus almacena los valores de idoneidad predichos
+# en los puntos de ausencia
+eval_aus <- terra::extract(
+  prediccion, 
+  ausencias
+)
+
+# Generar estadísticas de evaluación del modelo
+resultado_evaluacion <- evaluate(p = eval_pres, a = eval_aus)
+
+```
+
+El gráfico ROC predice que tan bueno es el modelo. En este caso se considera que tiene una buena aproximación ya que su valor se aproxima a 1.
+
+```{r}
+#| label: grafico_ROC
+#| warning: false
+#| message: false
+# Datos para graficar la curva ROC
+datos_roc <- data.frame(
+  FPR = resultado_evaluacion@FPR,
+  TPR = resultado_evaluacion@TPR,
+  Umbral = resultado_evaluacion@t
+)
+
+# Valor AUC
+auc <- resultado_evaluacion@auc
+
+# Gráfico ggplot2
+grafico_ggplot2 <-
+  ggplot(
+    datos_roc, 
+    aes(
+      x = FPR, 
+      y = TPR,
+      u = Umbral
+    )
+  ) +
+  geom_line(
+    color = "blue", 
+    size = 1
+  ) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(title = paste("Curva ROC (AUC =", round(auc, 3), ")"),
+       x = "Tasa de falsos positivos (FPR)",
+       y = "Tasa de verdaderos positivos (TPR)") +
+  theme_minimal()
+
+# Gráfico plotly
+ggplotly(grafico_ggplot2) |> 
+  config(locale = 'es')
+```
+
+## 4. Idoneidad del habitat de Morpho Peleides
+
+```{r}
+#| label: Idoneidad
+# Un mapa interactivo de idoneidad del hábitat que muestre la probabilidad de presencia de la especie en cada celda mediante un número decimal entre 0 y 1.
+
+# Paleta de colores del modelo
+colores_modelo <- colorNumeric(
+  palette = c("white", "black"),
+  values(prediccion),
+  na.color = "transparent"
+)
+
+# Mapa
+leaflet() |>
+  addTiles(group = "Mapa general") |>
+  addProviderTiles(
+    providers$Esri.WorldImagery, 
+    group = "Imágenes satelitales"
+  ) |>  
+  addProviderTiles(
+    providers$CartoDB.Positron, 
+    group = "Mapa blanco"
+  ) |>
+  addRasterImage( # capa raster de temperatura
+    clima$wc2.1_10m_bio_1,
+    colors = colores_temperatura, # paleta de colores
+    opacity = 0.6,
+    group = "Temperatura",
+  ) |>
+  addRasterImage( # capa raster de precipitación
+    clima$wc2.1_10m_bio_12,
+    colors = colores_precipitacion, # paleta de colores
+    opacity = 0.6,
+    group = "Precipitación",
+  ) |>
+  addRasterImage( # capa raster del modelo de distribución
+    prediccion,
+    colors = colores_modelo,
+    opacity = 0.6,
+    group = "Modelo de distribución",
+  ) |>  
+  addCircleMarkers(
+    # capa de registros de presencia (puntos)
+    data = presencia,
+    stroke = F,
+    radius = 3,
+    fillColor = 'red',
+    fillOpacity = 1,
+    popup = paste(
+      paste0("<strong>País: </strong>", presencia_CR$country),
+      paste0("<strong>Localidad: </strong>", presencia_CR$locality),
+      paste0("<strong>Fecha: </strong>", presencia_CR$eventDate),
+      paste0("<strong>Fuente: </strong>", presencia_CR$institutionCode),
+      paste0("<a href='", presencia_CR$occurrenceID, "'>Más información</a>"),
+      sep = '<br/>'
+    ),
+    group = "Registros de Morpho peleides"
+  ) |>  
+  addLegend(
+    title = "Temperatura",
+    values = values(clima$wc2.1_10m_bio_1),
+    pal = colores_temperatura,
+    position = "bottomleft",
+    group = "Temperatura"
+  ) |>
+  addLegend(
+    title = "Precipitación",
+    values = values(clima$wc2.1_10m_bio_12),
+    pal = colores_precipitacion,
+    position = "bottomleft",
+    group = "Precipitación"
+  ) |>
+  addLegend(
+    title = "Modelo de distribución",
+    values = values(prediccion),
+    pal = colores_modelo,
+    position = "bottomright",
+    group = "Modelo de distribución"
+  ) |>  
+  addLayersControl(
+    # control de capas
+    baseGroups = c("Mapa general", "Imágenes satelitales", "Mapa blanco"),
+    overlayGroups = c(
+      "Temperatura",
+      "Precipitación",
+      "Modelo de distribución",
+      "Registros de Morpho peleides"
+    )
+  ) |>
+  hideGroup("Temperatura") |>
+  hideGroup("Precipitación")
+```
+
+El modelo representa la idoneidad de la presencia de la mariposa Morpho el cual se identifica en las zonas tropicales.
+
+## 5. Un mapa interactivo binario de distribución
+
+```{r}
+#| label: mapa_binario
+
+# Definir el umbral
+umbral <- 0.5
+
+# Crear el raster binario
+prediccion_binaria <- (prediccion >= umbral) * 1
+
+# Crear la paleta de colores para el raster binario
+colores_prediccion_binaria <- colorFactor(
+  palette = c("transparent", "blue"),  # "transparent" para las áreas no adecuadas
+  domain = c(0, 1),
+  na.color = "transparent"
+)
+
+# Mapa
+leaflet() |>
+  addTiles(group = "Mapa general") |>
+  addProviderTiles(
+    providers$Esri.WorldImagery, 
+    group = "Imágenes satelitales"
+  ) |>
+  addProviderTiles(
+    providers$CartoDB.Positron, 
+    group = "Mapa blanco"
+  ) |>
+  addRasterImage(
+    prediccion_binaria,
+    colors = colores_prediccion_binaria,
+    opacity = 0.6,
+    group = "Modelo de distribución binario",
+  ) |>
+  addCircleMarkers(
+    data = presencia,
+    stroke = FALSE,
+    radius = 3,
+    fillColor = 'red',
+    fillOpacity = 1,
+    popup = paste(
+      paste0("<strong>País: </strong>", presencia$country),
+      paste0("<strong>Localidad: </strong>", presencia$locality),
+      paste0("<strong>Fecha: </strong>", presencia$eventDate),
+      paste0("<strong>Fuente: </strong>", presencia$institutionCode),
+      paste0("<a href='", presencia$occurrenceID, "'>Más información</a>"),
+      sep = '<br/>'
+    ),
+    group = "Registros de Bradypus variegatus"
+  ) |>
+  addLegend(
+    title = "Modelo de distribución binario",
+    labels = c("Ausencia", "Presencia"),
+    colors = c("transparent", "blue"),
+    position = "bottomright",
+    group = "Modelo de distribución binario"
+  ) |>
+  addLayersControl(
+    baseGroups = c("Mapa general", "Imágenes satelitales", "Mapa blanco"),
+    overlayGroups = c(
+      "Modelo de distribución binario",
+      "Registros de Bradypus variegatus"
+    )
+  )
+```
+
+A continuacón se muestra un mapa de las posibles zonas de presencia de la especie *Morpho peleides*.
+
+## 6 Distribución de la especie según elevación
+
+Carga Datos
+
+```{r}
+# Un mapa adicional de su elección que ayuden a entender la distribución de la especie. Puede utilizar capas adicionales como vegetación, suelos, ecosistemas, etc.o realizar un análisis adicional.
+#| label: Mapa_elevacion
+#Obtención de datos elevacion
+
+
+#| warning: false
+#| message: false
+
+# Consulta a SRTM
+elevacion <- worldclim_global(var = 'elev', res = 10, path = tempdir())
+
+
+# Nombres de las variables elevación 
+names(elevacion)
+#| label: recorte
+#| warning: false
+#| message: false
+# Definir la extensión del área de estudio
+area_estudio2 <- ext(
+  min(presencia_CR$decimalLongitude) - 5, 
+  max(presencia_CR$decimalLongitude) + 5,
+  min(presencia_CR$decimalLatitude) - 5, 
+  max(presencia_CR$decimalLatitude) + 5
+)
+
+# Recortar las variables bioclimáticas al área de estudio
+elevacion <- crop(elevacion, area_estudio2)
+```
+
+### Mapa de distribución de Morpho Peleides por elevación
+
+```{r}
+#| label: mapa_elev
+#| warning: false
+#| message: false
+# Paleta de colores de temperatura
+colores_temperatura <- colorNumeric(
+  palette = rev(brewer.pal(11, "RdYlBu")),
+  values(clima$wc2.1_10m_bio_1),
+  na.color = "transparent"
+)
+
+# Paleta de colores de elevación
+colores_elevacion <- colorNumeric(
+  palette = "viridis",
+  values(elevacion$wc2.1_10m_elev),
+  na.color = "transparent"
+)
+
+# Mapa
+leaflet() |>
+  addTiles(group = "Mapa general") |>
+  addProviderTiles(
+    providers$Esri.WorldImagery, 
+    group = "Imágenes satelitales"
+  ) |>  
+  addProviderTiles(
+    providers$CartoDB.Positron, 
+    group = "Mapa blanco"
+  ) |>
+  addRasterImage(
+    clima$wc2.1_10m_bio_1,
+    colors = colores_temperatura,
+    opacity = 0.6,
+    group = "Temperatura",
+  ) |>
+  addRasterImage(
+    elevacion$wc2.1_10m_elev,
+    colors = colores_elevacion,
+    opacity = 0.6,
+    group = "Elevación",
+  ) |>
+  addCircleMarkers(
+    data = presencia_CR,
+    stroke = F,
+    radius = 3,
+    fillColor = 'blue',
+    fillOpacity = 1,
+    popup = paste(
+      paste0("<strong>País: </strong>", presencia_CR$country),
+      paste0("<strong>Localidad: </strong>", presencia_CR$locality),
+      paste0("<strong>Fecha: </strong>", presencia_CR$eventDate),
+      paste0("<strong>Fuente: </strong>", presencia_CR$institutionCode),
+      paste0("<a href='", presencia_CR$occurrenceID, "'>Más información</a>"),
+      sep = '<br/>'
+    ),
+    group = "Registros de Morpho peleides"
+  ) |>  
+  addLegend(
+    title = "Temperatura",
+    values = values(clima$wc2.1_10m_bio_1),
+    pal = colores_temperatura,
+    position = "bottomleft",
+    group = "Temperatura"
+  ) |>
+  addLegend(
+    title = "Elevación",
+    values = values(elevacion$wc2.1_10m_elev),
+    pal = colores_elevacion,
+    position = "bottomleft",
+    group = "Elevación"
+  ) |>  
+  addLayersControl(
+    baseGroups = c("Mapa general", "Imágenes satelitales", "Mapa blanco"),
+    overlayGroups = c("Elevación", "Temperatura", "Registros de Morpho peleides")
+  ) 
+
+```
+
+El habitat de la Morpho según el modelo se muestra entre los 500 y 2000 m.s.n.m. y casi no se observan en las zonas costeras y elevadas.
+
+\`\`\`
+
+## 7. Referencias
+
+Rothschuh, U. (2022). Mariposa morpho: características, hábitat y alimentación. En Ecología Verde. https://www.ecologiaverde.com/mariposa-morpho-caracteristicas-habitat-y-alimentacion-3895.html
+
+Jansen, D. (1983). Costa Rican Natural History. University of Chicago Press. Chicago and London. USA.
